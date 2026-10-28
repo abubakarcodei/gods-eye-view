@@ -113,7 +113,11 @@ export default async function handler(req, res) {
   // Vercel does not route [...path] catch-alls outside Next.js, so
   // vercel.json rewrites /api/:path* to /api/gev?__gev=:path* — put the
   // original URL back together before dispatching.
-  if (req.url && req.url.startsWith('/api/gev')) {
+  // Vercel may deliver this function's URL in either shape — the
+  // destination URL (/api/gev?__gev=...) or the original request URL
+  // with the destination query merged in (/api/weather/...?__gev=...).
+  // Key off the __gev param itself, wherever the URL arrived.
+  if (req.url && req.url.includes('__gev=')) {
     try {
       const u = new URL(req.url, 'http://internal');
       if (u.searchParams.has('__gev')) {
