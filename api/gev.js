@@ -109,6 +109,49 @@ function matchRemainder(routePath, url) {
   return null;
 }
 
+/**
+ * CDN cache policy for idempotent GET data routes (seconds). The
+ * upstream handlers answer `Cache-Control: no-store` because they run
+ * on a localhost dev server; behind Vercel's CDN that forces every
+ * poll through a cold function (~3 s). These feeds are public,
+ * keyless and slow-changing, so the CDN serves them at the edge and
+ * revalidates in the background — the app's polls become instant.
+ * Only exact 200 responses are cached; errors are never stored.
+ */
+const CDN_CACHE_RULES = [
+  ['/api/celestrak/', 'public, s-maxage=3600, stale-while-revalidate=86400'],
+  ['/api/terrain/heights', 'public, s-maxage=3600, stale-while-revalidate=86400'],
+  ['/api/route', 'public, s-maxage=3600, stale-while-revalidate=86400'],
+  ['/api/adsbdb/', 'public, s-maxage=3600, stale-while-revalidate=86400'],
+  ['/api/geocode', 'public, s-maxage=86400, stale-while-revalidate=604800'],
+  ['/api/transit/feeds', 'public, s-maxage=86400, stale-while-revalidate=604800'],
+  ['/api/transit/vehicles/', 'public, s-maxage=5, stale-while-revalidate=15'],
+  ['/api/cctv/sources', 'public, s-maxage=600, stale-while-revalidate=3600'],
+  ['/api/cctv/health', 'public, s-maxage=60, stale-while-revalidate=300'],
+  ['/api/weather/manifest', 'public, s-maxage=300, stale-while-revalidate=1800'],
+  ['/api/weather/', 'public, s-maxage=120, stale-while-revalidate=600'],
+  ['/api/wind/manifest', 'public, s-maxage=600, stale-while-revalidate=3600'],
+  ['/api/fire-perimeters', 'public, s-maxage=300, stale-while-revalidate=1800'],
+  ['/api/cyclones', 'public, s-maxage=600, stale-while-revalidate=3600'],
+  ['/api/launches', 'public, s-maxage=300, stale-while-revalidate=3600'],
+  ['/api/gnss-integrity', 'public, s-maxage=20, stale-while-revalidate=40'],
+  ['/api/flights', 'public, s-maxage=10, stale-while-revalidate=20'],
+  ['/api/military', 'public, s-maxage=10, stale-while-revalidate=20'],
+  ['/api/vessels', 'public, s-maxage=5, stale-while-revalidate=10'],
+  ['/api/radio/', 'public, s-maxage=120, stale-while-revalidate=600'],
+  ['/api/ghostmaps/catalog', 'public, s-maxage=120, stale-while-revalidate=600'],
+  ['/api/tomtom/status', 'public, s-maxage=60, stale-while-revalidate=300'],
+  ['/api/overpass/status', 'public, s-maxage=300, stale-while-revalidate=3600'],
+  ['/api/mapillary/status', 'public, s-maxage=300, stale-while-revalidate=3600'],
+];
+
+function cdnCacheSpecFor(url) {
+  for (const [prefix, spec] of CDN_CACHE_RULES) {
+    if (url === prefix || url.startsWith(prefix)) return spec;
+  }
+  return null;
+}
+
 export default async function handler(req, res) {
   // Vercel does not route [...path] catch-alls outside Next.js, so
   // vercel.json rewrites /api/:path* to /api/gev?__gev=:path* — put the
@@ -151,6 +194,30 @@ export default async function handler(req, res) {
     if (req.socket) req.socket.encrypted = true;
   } catch {
     /* socket may be frozen in some runtimes; Origin check falls back */
+  }
+
+  // CDN caching for public GET data (see CDN_CACHE_RULES). Applied by
+  // replacing the handler's Cache-Control at writeHead time, and only
+  // for 200 responses, so errors and POST flows are never stored.
+  if (req.method === 'GET') {
+    const spec = cdnCacheSpecFor((req.url || '').split('?')[0]);
+    if (spec) {
+      const originalWriteHead = res.writeHead.bind(res);
+      res.writeHead = (status, ...rest) => {
+        if (status === 200) {
+          res.setHeader('Cache-Control', spec);
+          const headersArg = rest.find(
+            (a) => a && typeof a === 'object' && !Array.isArray(a),
+          );
+          if (headersArg) {
+            for (const key of Object.keys(headersArg)) {
+              if (key.toLowerCase() === 'cache-control') delete headersArg[key];
+            }
+          }
+        }
+        return originalWriteHead(status, ...rest);
+      };
+    }
   }
 
   let routes;
