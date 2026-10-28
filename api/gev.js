@@ -119,6 +119,11 @@ export default async function handler(req, res) {
       if (u.searchParams.has('__gev')) {
         const originalPath = u.searchParams.get('__gev');
         u.searchParams.delete('__gev');
+        // Vercel also passes the rewrite's matched :path* segment to the
+        // destination as a `path` query param. No upstream endpoint uses
+        // a `path` param, and strict handlers (e.g. /api/weather) reject
+        // unknown keys — drop it so handlers see the original query only.
+        u.searchParams.delete('path');
         const qs = u.searchParams.toString();
         req.url = `/api/${originalPath}${qs ? `?${qs}` : ''}`;
       }
