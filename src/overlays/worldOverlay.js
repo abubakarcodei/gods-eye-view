@@ -1323,7 +1323,17 @@ function ensureCanvasSize() {
     0,
     Math.round(Number(_viewer.canvas.clientHeight) || 0),
   );
-  const dpr = Math.max(1, Number(globalThis.window?.devicePixelRatio) || 1);
+  // Fork patch: cap the overlay surface's pixel ratio on touch devices.
+  // This full-screen canvas (detection boxes, labels, HUD projections)
+  // redraws every frame; at a phone's native 3-4x ratio it costs 9-16x
+  // the fill of the CSS-pixel surface for no visible gain.
+  const nativeDpr = Math.max(
+    1,
+    Number(globalThis.window?.devicePixelRatio) || 1,
+  );
+  const coarsePointer =
+    globalThis.window?.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+  const dpr = Math.min(nativeDpr, coarsePointer ? 1.5 : 2);
   const changed =
     _canvas.width !== Math.round(width * dpr) ||
     _canvas.height !== Math.round(height * dpr) ||

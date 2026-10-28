@@ -35,3 +35,12 @@
 @import './src/ui/styles/cjk.css';
 @import './src/ui/styles/mobile-shell.css';
 @import './src/ui/styles/cyber.css';
+
+/* Fork deployment profile (Vercel, keyless): the voice agent needs an
+   OpenAI/Gemini API key that this deployment does not carry, and the
+   provider-key setup surface removes itself when its endpoint is
+   absent — so the dead voice dock is stripped from the UI entirely.
+   Remove this block if voice keys are ever configured. */
+#gev-voice-control {
+  display: none !important;
+}

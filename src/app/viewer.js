@@ -5,6 +5,32 @@ import { StarrySky } from '../sky/starrySky.js';
 const PINCH_ZOOM_MULTIPLIER = 8;
 const MAX_PINCH_PIXEL_DELTA = 120;
 
+/**
+ * Device performance profile (fork patch for the Vercel deployment).
+ *
+ * Cesium's defaults are desktop-tuned: MSAA 4x plus rendering at the
+ * full devicePixelRatio (3-4x on phones, i.e. 9-16x the pixels) and a
+ * 60 fps frame cap. On touch devices that combination is the dominant
+ * frame-rate cost, so coarse pointers get a capped render resolution,
+ * no MSAA (the FXAA post stage still anti-aliases), coarser globe tile
+ * detail on low-end hardware, and a 120 fps cap so 90/120 Hz phone
+ * panels are not throttled to 60. Desktop behavior is unchanged.
+ */
+export function devicePerformanceProfile() {
+  const coarse =
+    globalThis.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+  const cores = Number(globalThis.navigator?.hardwareConcurrency) || 8;
+  const memory = Number(globalThis.navigator?.deviceMemory) || 8;
+  const lowEnd = coarse && (cores <= 4 || memory <= 4);
+  const dpr = Math.max(1, Number(globalThis.devicePixelRatio) || 1);
+  return {
+    coarse,
+    lowEnd,
+    resolutionScale: lowEnd ? 1 : coarse ? Math.min(dpr, 1.5) : dpr,
+    globeScreenSpaceError: lowEnd ? 4 : coarse ? 3 : 2,
+  };
+}
+
 function boundedPinchDelta(delta) {
   if (!Number.isFinite(delta) || delta === 0) return delta;
   return (
@@ -122,7 +148,9 @@ export function applicationViewerOptions(creditContainer) {
     // which would also stop CesiumWidget from creating the Sun and Moon.
     skyBox: new StarrySky(),
     creditContainer,
-    msaaSamples: 4,
+    // Fork patch: MSAA render targets are disproportionately expensive
+    // on tile-based phone GPUs; FXAA still anti-aliases there.
+    msaaSamples: devicePerformanceProfile().coarse ? 1 : 4,
     contextOptions: { webgl: { preserveDrawingBuffer: true } },
   };
 }
@@ -136,7 +164,16 @@ export function createApplicationViewer({ container, creditContainer }) {
     applicationViewerOptions(creditContainer),
   );
   try {
-    viewer.targetFrameRate = 60;
+    // Fork patch: apply the device performance profile (see
+    // devicePerformanceProfile). 120 fps cap on touch devices unlocks
+    // 90/120 Hz panels; the render governor still idles when parked.
+    const profile = devicePerformanceProfile();
+    viewer.targetFrameRate = profile.coarse ? 120 : 60;
+    if (profile.coarse) {
+      viewer.resolutionScale = profile.resolutionScale;
+      viewer.scene.globe.maximumScreenSpaceError =
+        profile.globeScreenSpaceError;
+    }
     // A phone pinch spans fewer screen pixels than desktop zoom gestures.
     // Keep Cesium's distance-aware zoom and collision limits, with less travel
     // required on touch-first screens. Mouse/trackpad sensitivity stays native.
